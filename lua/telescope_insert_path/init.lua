@@ -69,18 +69,18 @@ local function get_relative_path(file, dir)
   end
 end
 
-local function get_path_from_entry(entry, relative)
+local function get_path_from_entry(entry, source)
   local filename
-  if relative == "buf" then
+  if source == "buf" then
     -- path relative to current buffer
     local selection_abspath = entry.path
     local bufpath = vim.fn.expand "%:p"
     local bufdir = vim.fn.fnamemodify(bufpath, ":h")
     filename = get_relative_path(selection_abspath, bufdir)
-  elseif relative == "cwd" then
+  elseif source == "cwd" then
     -- path relative to current working directory
     filename = entry.filename
-  elseif relative == "git" then
+  elseif source == "git" then
     local git_root = get_git_root()
 
     if not git_root then
@@ -88,7 +88,7 @@ local function get_path_from_entry(entry, relative)
     end
 
     filename = get_relative_path(entry.path, git_root)
-  elseif relative == "source" then
+  elseif source == "source" then
     filename = get_relative_path(entry.path, path_actions.source_dir)
   else
     -- absolute path
@@ -97,29 +97,7 @@ local function get_path_from_entry(entry, relative)
   return filename
 end
 
-local function _insert_path(prompt_bufnr, relative, location, vim_mode)
-  if
-    location ~= "i"
-    and location ~= "I"
-    and location ~= "a"
-    and location ~= "A"
-    and location ~= "o"
-    and location ~= "O"
-  then
-    location = vim.fn.nr2char(vim.fn.getchar())
-    if
-      location ~= "i"
-      and location ~= "I"
-      and location ~= "a"
-      and location ~= "A"
-      and location ~= "o"
-      and location ~= "O"
-    then
-      -- escape
-      return nil
-    end
-  end
-
+local function _insert_path(prompt_bufnr, source, insert_mode)
   local picker = action_state.get_current_picker(prompt_bufnr)
 
   actions.close(prompt_bufnr)
@@ -128,11 +106,11 @@ local function _insert_path(prompt_bufnr, relative, location, vim_mode)
 
   -- local from_entry = require "telescope.from_entry"
   -- local filename = from_entry.path(entry)
-  local filename = get_path_from_entry(entry, relative)
+  local filename = get_path_from_entry(entry, source)
 
   local selections = {}
   for _, selection in ipairs(picker:get_multi_selection()) do
-    local selection_filename = get_path_from_entry(selection, relative)
+    local selection_filename = get_path_from_entry(selection, source)
 
     if selection_filename ~= filename then
       table.insert(selections, selection_filename)
@@ -142,42 +120,15 @@ local function _insert_path(prompt_bufnr, relative, location, vim_mode)
   -- normal mode
   vim.cmd [[stopinsert]]
 
-  local put_after = nil
-  if location == "i" then
-    put_after = false
-  elseif location == "I" then
-    vim.cmd [[normal! I]]
-    put_after = false
-  elseif location == "a" then
-    put_after = true
-  elseif location == "A" then
-    vim.cmd [[normal! $]]
-    put_after = true
-  elseif location == "o" then
-    vim.cmd [[normal! o ]] -- add empty space so the cursor respects the indent
-    vim.cmd [[normal! x]] -- and immediately delete it
-    put_after = true
-  elseif location == "O" then
-    vim.cmd [[normal! O ]]
-    vim.cmd [[normal! x]]
-    put_after = true
-  end
-
   local cursor_pos_visual_start = vim.api.nvim_win_get_cursor(0)
 
   -- if you use nvim_put it's hard to know the range of the new text.
   -- vim.api.nvim_put({ filename }, "", put_after, true)
   local line = vim.api.nvim_get_current_line()
   local new_line
-  if put_after then
-    local text_before = line:sub(1, cursor_pos_visual_start[2] + 1)
-    new_line = text_before .. filename .. line:sub(cursor_pos_visual_start[2] + 2)
-    cursor_pos_visual_start[2] = text_before:len()
-  else
-    local text_before = line:sub(1, cursor_pos_visual_start[2])
-    new_line = text_before .. filename .. line:sub(cursor_pos_visual_start[2] + 1)
-    cursor_pos_visual_start[2] = text_before:len()
-  end
+  local text_before = line:sub(1, cursor_pos_visual_start[2] + 1)
+  new_line = text_before .. filename .. line:sub(cursor_pos_visual_start[2] + 2)
+  cursor_pos_visual_start[2] = text_before:len()
   vim.api.nvim_set_current_line(new_line)
 
   local cursor_pos_visual_end
@@ -196,19 +147,13 @@ local function _insert_path(prompt_bufnr, relative, location, vim_mode)
     cursor_pos_visual_end = { cursor_pos_visual_start[1], cursor_pos_visual_start[2] + filename:len() - 1 }
   end
 
-  if vim_mode == "v" then
-    -- There is a weird artefact if we go into visual mode before putting text. #1
-    -- So we go into visual mode after putting text.
-    vim.api.nvim_win_set_cursor(0, cursor_pos_visual_start)
-    vim.cmd [[normal! v]]
-    vim.api.nvim_win_set_cursor(0, cursor_pos_visual_end)
-  elseif vim_mode == "n" then
-    vim.api.nvim_win_set_cursor(0, cursor_pos_visual_end)
-  elseif vim_mode == "i" then
+  if insert_mode then
     vim.api.nvim_win_set_cursor(0, cursor_pos_visual_end)
     -- append like 'a'
     vim.cmd [[startinsert]]
     vim.cmd [[call cursor( line('.'), col('.') + 1)]]
+  else
+    vim.api.nvim_win_set_cursor(0, cursor_pos_visual_end)
   end
 end
 
@@ -267,12 +212,9 @@ end
 -- default value
 path_actions.source_dir = get_git_root_or_cwd()
 
-function path_actions.insert_path(relative, location, vim_mode)
-  location = location or "i"
-  vim_mode = vim_mode or "i"
-
+function path_actions.insert_path(source, insert_mode)
   return function(prompt_bufnr)
-    _insert_path(prompt_bufnr, relative, location, vim_mode)
+    _insert_path(prompt_bufnr, source, insert_mode)
   end
 end
 
